@@ -372,6 +372,7 @@
   }
 
   function startApp() {
+    if (session) localStorage.setItem('sb_session', JSON.stringify(session));
     document.getElementById('authBox').style.display = 'none';
     document.getElementById('appBox').style.display  = 'block';
     document.getElementById('userEmail').textContent = session.user?.email || '';
@@ -524,13 +525,6 @@
         startApp();
       } catch (_) { localStorage.removeItem('sb_session'); }
     }
-  }
-
-  // Persist session on login
-  const _origStartApp = startApp;
-  function startApp() {
-    if (session) localStorage.setItem('sb_session', JSON.stringify(session));
-    _origStartApp();
   }
 
   init();
