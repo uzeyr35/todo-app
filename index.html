@@ -143,21 +143,10 @@
       flex-shrink: 0;
     }
 
-    li button.delete {
-      color: #d1d5db;
-    }
-
-    li button.delete:hover {
-      color: #ef4444;
-    }
-
-    li button.edit {
-      color: #d1d5db;
-    }
-
-    li button.edit:hover {
-      color: #4f46e5;
-    }
+    li button.delete { color: #d1d5db; }
+    li button.delete:hover { color: #ef4444; }
+    li button.edit { color: #d1d5db; }
+    li button.edit:hover { color: #4f46e5; }
 
     li.editing span { display: none; }
 
@@ -175,6 +164,23 @@
       color: #9ca3af;
       font-size: 0.9rem;
       padding: 32px 0;
+    }
+
+    .loading {
+      text-align: center;
+      color: #9ca3af;
+      font-size: 0.9rem;
+      padding: 32px 0;
+    }
+
+    .error-msg {
+      background: #fef2f2;
+      color: #dc2626;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      margin-bottom: 12px;
+      display: none;
     }
 
     .footer {
@@ -195,14 +201,14 @@
       text-decoration: underline;
     }
 
-    .footer button:hover {
-      color: #ef4444;
-    }
+    .footer button:hover { color: #ef4444; }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Yapılacaklar</h1>
+
+    <div class="error-msg" id="errorMsg"></div>
 
     <div class="input-row">
       <input type="text" id="todoInput" placeholder="Yeni görev ekle..." />
@@ -215,7 +221,7 @@
       <button onclick="setFilter('done', this)">Tamamlanan</button>
     </div>
 
-    <ul id="todoList"></ul>
+    <ul id="todoList"><p class="loading">Yükleniyor...</p></ul>
 
     <div class="footer">
       <span id="remaining"></span>
@@ -224,44 +230,98 @@
   </div>
 
   <script>
-    let todos = JSON.parse(localStorage.getItem('todos') || '[]');
+    const SUPABASE_URL = 'https://nrbnoxonnipgelzccimq.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5yYm5veG9ubmlwZ2VsemNjaW1xIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5MzExMTYsImV4cCI6MjA4NDUwNzExNn0.dT1OjxEyqjlFiBgagXUDm7X9nMR1xYC5e8GSivvb7C8';
+
+    const headers = {
+      'apikey': SUPABASE_KEY,
+      'Authorization': `Bearer ${SUPABASE_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=representation'
+    };
+
+    let todos = [];
     let filter = 'all';
 
-    const input = document.getElementById('todoInput');
-    const list  = document.getElementById('todoList');
+    const input   = document.getElementById('todoInput');
+    const list    = document.getElementById('todoList');
+    const errBox  = document.getElementById('errorMsg');
 
     input.addEventListener('keydown', e => { if (e.key === 'Enter') addTodo(); });
 
-    function save() {
-      localStorage.setItem('todos', JSON.stringify(todos));
+    function showError(msg) {
+      errBox.textContent = msg;
+      errBox.style.display = 'block';
+      setTimeout(() => errBox.style.display = 'none', 4000);
     }
 
-    function addTodo() {
+    async function api(path, method = 'GET', body = null, extra = {}) {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+        method,
+        headers: { ...headers, ...extra },
+        body: body ? JSON.stringify(body) : null
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || res.statusText);
+      }
+      return res.status === 204 ? null : res.json();
+    }
+
+    async function loadTodos() {
+      try {
+        todos = await api('todos?order=created_at.asc');
+        render();
+      } catch (e) {
+        showError('Görevler yüklenemedi: ' + e.message);
+      }
+    }
+
+    async function addTodo() {
       const text = input.value.trim();
       if (!text) return;
-      todos.push({ id: Date.now(), text, done: false });
       input.value = '';
-      save();
-      render();
+      try {
+        const [created] = await api('todos', 'POST', { text, done: false });
+        todos.push(created);
+        render();
+      } catch (e) {
+        showError('Görev eklenemedi: ' + e.message);
+      }
     }
 
-    function toggle(id) {
+    async function toggle(id) {
       const t = todos.find(t => t.id === id);
-      if (t) t.done = !t.done;
-      save();
-      render();
+      if (!t) return;
+      try {
+        const [updated] = await api(`todos?id=eq.${id}`, 'PATCH', { done: !t.done });
+        t.done = updated.done;
+        render();
+      } catch (e) {
+        showError('Görev güncellenemedi: ' + e.message);
+      }
     }
 
-    function remove(id) {
-      todos = todos.filter(t => t.id !== id);
-      save();
-      render();
+    async function remove(id) {
+      try {
+        await api(`todos?id=eq.${id}`, 'DELETE', null, { 'Prefer': 'return=minimal' });
+        todos = todos.filter(t => t.id !== id);
+        render();
+      } catch (e) {
+        showError('Görev silinemedi: ' + e.message);
+      }
     }
 
-    function clearDone() {
-      todos = todos.filter(t => !t.done);
-      save();
-      render();
+    async function clearDone() {
+      const doneIds = todos.filter(t => t.done).map(t => t.id);
+      if (!doneIds.length) return;
+      try {
+        await api(`todos?id=in.(${doneIds.join(',')})`, 'DELETE', null, { 'Prefer': 'return=minimal' });
+        todos = todos.filter(t => !t.done);
+        render();
+      } catch (e) {
+        showError('Görevler silinemedi: ' + e.message);
+      }
     }
 
     function setFilter(f, btn) {
@@ -282,7 +342,7 @@
         list.innerHTML = visible.map(t => `
           <li class="${t.done ? 'done' : ''}">
             <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggle(${t.id})">
-            <span>${escape(t.text)}</span>
+            <span>${esc(t.text)}</span>
             <button class="edit" onclick="startEdit(${t.id})" title="Düzenle">&#9998;</button>
             <button class="delete" onclick="remove(${t.id})" title="Sil">&#10005;</button>
           </li>
@@ -290,14 +350,13 @@
       }
 
       const active = todos.filter(t => !t.done).length;
-      document.getElementById('remaining').textContent =
-        `${active} görev kaldı`;
+      document.getElementById('remaining').textContent = `${active} görev kaldı`;
     }
 
     function startEdit(id) {
       const li = [...document.querySelectorAll('#todoList li')].find(el => {
-        const editBtn = el.querySelector('button.edit');
-        return editBtn && editBtn.getAttribute('onclick') === `startEdit(${id})`;
+        const btn = el.querySelector('button.edit');
+        return btn && btn.getAttribute('onclick') === `startEdit(${id})`;
       });
       if (!li) return;
 
@@ -308,30 +367,38 @@
       editInput.className = 'edit-input';
       editInput.value = t.text;
 
-      const span = li.querySelector('span');
-      li.insertBefore(editInput, span.nextSibling);
+      li.insertBefore(editInput, li.querySelector('span').nextSibling);
       editInput.focus();
       editInput.select();
 
-      const finish = () => {
+      let saved = false;
+      const finish = async () => {
+        if (saved) return;
+        saved = true;
         const newText = editInput.value.trim();
-        if (newText) t.text = newText;
-        save();
+        if (newText && newText !== t.text) {
+          try {
+            const [updated] = await api(`todos?id=eq.${id}`, 'PATCH', { text: newText });
+            t.text = updated.text;
+          } catch (e) {
+            showError('Görev güncellenemedi: ' + e.message);
+          }
+        }
         render();
       };
 
       editInput.addEventListener('keydown', e => {
         if (e.key === 'Enter') finish();
-        if (e.key === 'Escape') render();
+        if (e.key === 'Escape') { saved = true; render(); }
       });
       editInput.addEventListener('blur', finish);
     }
 
-    function escape(str) {
+    function esc(str) {
       return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
-    render();
+    loadTodos();
   </script>
 </body>
 </html>
